@@ -1,0 +1,385 @@
+
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Makeup Artist Simulator 3D</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;overflow:hidden;font-family:Arial,sans-serif;background:#91d8e8}
+#game{width:100vw;height:100vh;display:block}
+#hud{position:absolute;top:12px;left:12px;color:#fff;pointer-events:none}
+.panel{background:#27213be8;padding:12px 16px;border-radius:15px;margin-bottom:9px;box-shadow:0 4px 12px #0003}
+#stats{display:flex;gap:15px;flex-wrap:wrap;font-weight:bold}
+#mission{max-width:300px}
+#controls{position:absolute;bottom:15px;left:15px;background:#27213be8;color:white;padding:12px;border-radius:13px;font-size:13px}
+#interact{position:absolute;bottom:18px;right:18px;background:#ff65a5;color:white;border:0;border-radius:15px;padding:15px 22px;font-size:17px;font-weight:bold;cursor:pointer}
+#makeup{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(360px,90vw);background:#fff0f7;padding:20px;border-radius:22px;text-align:center;box-shadow:0 8px 35px #0006}
+#makeup h2{color:#c73c83;margin:4px}
+#makeup button{border:0;padding:11px;margin:5px;border-radius:12px;background:#f36ca7;color:white;font-weight:bold;cursor:pointer}
+#makeup button:disabled{background:#aaa}
+#close{background:#444!important}
+#message{position:absolute;top:45%;left:50%;transform:translate(-50%,-50%);background:#29223bea;color:white;padding:15px 24px;border-radius:15px;display:none;text-align:center}
+#help{position:absolute;top:12px;right:12px;background:#fff;color:#333;padding:10px;border-radius:12px;font-size:12px}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+ <div class="panel" id="stats">
+  <span>💰 $<b id="money">100</b></span>
+  <span>⭐ Level <b id="level">1</b></span>
+  <span>🚗 <b id="vehicle">Đi bộ</b></span>
+ </div>
+ <div class="panel" id="mission">
+  <b>💄 MAKEUP ARTIST</b>
+  <div id="task">Tìm khách hàng trên bản đồ!</div>
+  <small id="progress">Khách hàng: 0/5</small>
+ </div>
+</div>
+<div id="help">🌸 Makeup City<br>Thành phố tự do</div>
+<div id="controls">
+ <b>ĐIỀU KHIỂN</b><br>
+ W A S D: Di chuyển<br>
+ E: Tương tác<br>
+ V: Đổi phương tiện<br>
+ Shift: Chạy nhanh<br>
+ Kéo màn hình: Xoay camera
+</div>
+<button id="interact">E - Tương tác</button>
+<div id="makeup">
+ <h2>💗 Beauty Studio</h2>
+ <p id="customerName">Khách hàng</p>
+ <div id="steps"></div>
+ <p id="makeupStatus">Hãy hoàn thành các bước makeup!</p>
+ <button id="close" onclick="closeMakeup()">Đóng</button>
+</div>
+<div id="message"></div>
+
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const canvas=document.querySelector('#game');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.setClearColor(0x91d8e8);
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x91d8e8);
+scene.fog=new THREE.Fog(0x91d8e8,35,100);
+
+const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,.1,200);
+camera.position.set(0,12,15);
+
+scene.add(new THREE.HemisphereLight(0xffffff,0x829b75,2));
+const sun=new THREE.DirectionalLight(0xffffff,2.5);
+sun.position.set(-15,25,15);
+sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);
+scene.add(sun);
+
+const mat=(color)=>new THREE.MeshStandardMaterial({color,roughness:.85});
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(150,150),mat(0x83c97c));
+ground.rotation.x=-Math.PI/2;
+ground.receiveShadow=true;
+scene.add(ground);
+
+// Roads
+function road(x,z,w,d){
+ const m=new THREE.Mesh(new THREE.BoxGeometry(w,.06,d),mat(0x777c89));
+ m.position.set(x,.04,z);scene.add(m);
+}
+road(0,0,150,8);
+road(0,0,8,150);
+for(let i=-65;i<=65;i+=10){
+ for(const z of [-4,4]){
+  const line=new THREE.Mesh(new THREE.BoxGeometry(.3,.02,2),mat(0xffffff));
+  line.position.set(i,.09,z);scene.add(line);
+ }
+}
+
+// Buildings
+const colors=[0xffb3ca,0xffd48a,0x9dc7ff,0xc3a5eb,0x99dfcb,0xffa68e];
+function building(x,z,color){
+ const h=4+Math.random()*6;
+ const b=new THREE.Mesh(new THREE.BoxGeometry(6,h,6),mat(color));
+ b.position.set(x,h/2,z);b.castShadow=true;b.receiveShadow=true;
+ scene.add(b);
+ const roof=new THREE.Mesh(new THREE.BoxGeometry(6.3,.3,6.3),mat(0xffffff));
+ roof.position.set(x,h+.12,z);scene.add(roof);
+ for(let y=1.5;y<h;y+=2)
+ for(let dx of [-1.7,1.7]){
+  const win=new THREE.Mesh(new THREE.BoxGeometry(.9,1,.08),mat(0x8ce4f2));
+  win.position.set(x+dx,y,z+3.04);scene.add(win);
+ }
+}
+for(let x=-55;x<=55;x+=13){
+ for(let z=-55;z<=55;z+=13){
+  if(Math.abs(x)<12||Math.abs(z)<12)continue;
+  building(x,z,colors[Math.floor(Math.random()*colors.length)]);
+ }
+}
+
+// Player
+function person(color=0xff66a5){
+ const g=new THREE.Group();
+ const body=new THREE.Mesh(new THREE.CapsuleGeometry(.45,.85,4,8),mat(color));
+ body.position.y=1.1;body.castShadow=true;g.add(body);
+ const head=new THREE.Mesh(new THREE.SphereGeometry(.37,16,16),mat(0xffd0aa));
+ head.position.y=2;g.add(head);
+ const hair=new THREE.Mesh(new THREE.SphereGeometry(.4,16,12),mat(0x56352f));
+ hair.scale.set(1, .65,1);hair.position.set(0,2.22,-.04);g.add(hair);
+ return g;
+}
+const player=person(0xf34d9a);
+scene.add(player);
+player.position.set(0,0,0);
+
+// Tên nhân vật chính
+const nameCanvas = document.createElement('canvas');
+nameCanvas.width = 512;
+nameCanvas.height = 100;
+
+const ctx = nameCanvas.getContext('2d');
+ctx.fillStyle = 'rgba(255,255,255,0.9)';
+ctx.beginPath();
+ctx.roundRect(5, 5, 502, 90, 25);
+ctx.fill();
+
+ctx.font = 'bold 38px Arial';
+ctx.textAlign = 'center';
+ctx.textBaseline = 'middle';
+ctx.fillStyle = '#e83e91';
+ctx.fillText('Vi Đặng Mai Phương', 256, 50);
+
+const nameTexture = new THREE.CanvasTexture(nameCanvas);
+const nameMaterial = new THREE.SpriteMaterial({
+  map: nameTexture,
+  transparent: true,
+  depthTest: false
+});
+
+const nameTag = new THREE.Sprite(nameMaterial);
+nameTag.scale.set(4.5, 0.88, 1);
+nameTag.position.set(0, 3.1, 0);
+player.add(nameTag);
+
+// Vehicles
+function vehicle(color,type){
+ const g=new THREE.Group();
+ const body=new THREE.Mesh(new THREE.BoxGeometry(type==='car'?2.2:1.1,.8,type==='car'?3.5:2),mat(color));
+ body.position.y=.7;body.castShadow=true;g.add(body);
+ if(type==='car'){
+  const top=new THREE.Mesh(new THREE.BoxGeometry(1.7,.8,1.6),mat(0x8ce5ed));
+  top.position.y=1.45;g.add(top);
+  for(let x of [-1,1])for(let z of [-1,1]){
+   const wheel=new THREE.Mesh(new THREE.CylinderGeometry(.35,.35,.2,12),mat(0x222222));
+   wheel.rotation.z=Math.PI/2;wheel.position.set(x,.4,z*1.15);g.add(wheel);
+  }
+ }else{
+  const seat=new THREE.Mesh(new THREE.BoxGeometry(.65,.3,.8),mat(0x333333));
+  seat.position.set(0,1.2,-.1);g.add(seat);
+  const wheelmat=mat(0x222222);
+  for(let z of [-.8,.8]){
+   const w=new THREE.Mesh(new THREE.TorusGeometry(.34,.09,8,16),wheelmat);
+   w.rotation.y=Math.PI/2;w.position.set(0,.35,z);g.add(w);
+  }
+ }
+ return g;
+}
+const bike=vehicle(0xffd33d,'bike');
+const car=vehicle(0x55aaff,'car');
+scene.add(bike,car);
+bike.visible=false;car.visible=false;
+
+let vehicleMode=0;
+const vehicleNames=['Đi bộ','Xe máy','Ô tô'];
+const speeds=[.12,.22,.3];
+
+// Customers
+const customers=[];
+const customerPositions=[
+ [-10, -12], [15,-14], [-17,17], [22,15], [0,29]
+];
+const names=['Linh','Anna','Mia','Sofia','Emma'];
+customerPositions.forEach((p,i)=>{
+ const g=person([0xffbb80,0x9d8cff,0x75c9df,0xff89bb,0xb6a1fa][i]);
+ g.position.set(p[0],0,p[1]);
+ scene.add(g);
+ const marker=new THREE.Mesh(
+  new THREE.CylinderGeometry(.65,.65,.12,24),
+  new THREE.MeshBasicMaterial({color:0xffd32d})
+ );
+ marker.position.set(p[0],.08,p[1]);scene.add(marker);
+ const ring=new THREE.Mesh(
+  new THREE.TorusGeometry(.7,.06,8,32),
+  new THREE.MeshBasicMaterial({color:0xfff000})
+ );
+ ring.rotation.x=Math.PI/2;ring.position.set(p[0],.2,p[1]);scene.add(ring);
+ customers.push({g,name:names[i],done:false,marker,ring});
+});
+
+// Input
+const keys={};
+addEventListener('keydown',e=>{
+ keys[e.key.toLowerCase()]=true;
+ if(e.key.toLowerCase()==='v')switchVehicle();
+ if(e.key.toLowerCase()==='e')interact();
+});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+
+function switchVehicle(){
+ vehicleMode=(vehicleMode+1)%3;
+ document.querySelector('#vehicle').textContent=vehicleNames[vehicleMode];
+}
+let current=null;
+let money=100,completed=0,level=1;
+let makeupDone=new Set();
+const makeupTasks=['Kem nền','Phấn mắt','Son môi','Má hồng'];
+
+function interact(){
+ if(current){
+  openMakeup(current);return;
+ }
+ const c=customers.find(c=>!c.done&&player.position.distanceTo(c.g.position)<4);
+ if(c){
+  current=c;
+  document.querySelector('#task').textContent='Đang phục vụ: '+c.name;
+  openMakeup(c);
+ }else showMessage('Hãy đến gần một khách hàng có dấu 💛!');
+}
+
+function openMakeup(c){
+ current=c;
+ makeupDone=new Set();
+ document.querySelector('#customerName').textContent='Khách hàng: '+c.name;
+ document.querySelector('#makeup').style.display='block';
+ renderSteps();
+}
+function renderSteps(){
+ const box=document.querySelector('#steps');
+ box.innerHTML='';
+ makeupTasks.forEach((task,i)=>{
+  const b=document.createElement('button');
+  b.textContent=(makeupDone.has(i)?'✓ ':'💄 ')+task;
+  b.disabled=makeupDone.has(i);
+  b.onclick=()=>{
+   makeupDone.add(i);
+   renderSteps();
+   if(makeupDone.size===4)finishMakeup();
+  };
+  box.appendChild(b);
+ });
+ document.querySelector('#makeupStatus').textContent=
+ makeupDone.size+'/4 bước hoàn thành';
+}
+function finishMakeup(){
+ current.done=true;
+ current.marker.visible=false;current.ring.visible=false;
+ money+=100;completed++;
+ if(completed%3===0)level++;
+ document.querySelector('#money').textContent=money;
+ document.querySelector('#level').textContent=level;
+ document.querySelector('#progress').textContent='Khách hàng: '+completed+'/5';
+ document.querySelector('#task').textContent='Tốt lắm! Hãy tìm khách tiếp theo.';
+ document.querySelector('#makeupStatus').textContent='🌟 Makeup hoàn thành! +$100';
+ showMessage('✨ Tuyệt vời! Bạn nhận được $100');
+ setTimeout(()=>{
+  closeMakeup();
+  current=null;
+  if(completed===5){
+   showMessage('🏆 Bạn đã hoàn thành tất cả khách hàng! Thành phố vẫn đang chờ bạn khám phá.');
+   document.querySelector('#task').textContent='Bạn là Beauty Artist chuyên nghiệp!';
+  }
+ },1400);
+}
+window.closeMakeup=()=>{
+ document.querySelector('#makeup').style.display='none';
+};
+function showMessage(t){
+ const el=document.querySelector('#message');
+ el.textContent=t;el.style.display='block';
+ clearTimeout(showMessage.timer);
+ showMessage.timer=setTimeout(()=>el.style.display='none',1800);
+}
+document.querySelector('#interact').onclick=interact;
+
+// Camera rotation
+let dragging=false,lastX=0,angle=0;
+canvas.addEventListener('pointerdown',e=>{dragging=true;lastX=e.clientX});
+addEventListener('pointerup',()=>dragging=false);
+addEventListener('pointermove',e=>{
+ if(dragging){angle-=(e.clientX-lastX)*.006;lastX=e.clientX;}
+});
+
+// Game loop
+const clock=new THREE.Clock();
+function animate(){
+ requestAnimationFrame(animate);
+ const dt=Math.min(clock.getDelta(),.05);
+ let dx=0,dz=0;
+ if(keys.w)dz-=1;
+ if(keys.s)dz+=1;
+ if(keys.a)dx-=1;
+ if(keys.d)dx+=1;
+ const len=Math.hypot(dx,dz);
+ if(len>0){
+  dx/=len;dz/=len;
+  const fast=keys.shift?1.7:1;
+  const speed=speeds[vehicleMode]*fast;
+  const cos=Math.cos(angle),sin=Math.sin(angle);
+  const mx=(dx*cos+dz*sin)*speed*dt*60;
+  const mz=(-dx*sin+dz*cos)*speed*dt*60;
+  player.position.x+=mx;
+  player.position.z+=mz;
+  player.rotation.y=Math.atan2(mx,mz);
+ }
+ player.position.x=THREE.MathUtils.clamp(player.position.x,-70,70);
+ player.position.z=THREE.MathUtils.clamp(player.position.z,-70,70);
+
+ bike.visible=vehicleMode===1;
+ car.visible=vehicleMode===2;
+ player.visible=vehicleMode===0;
+ const active=vehicleMode===1?bike:vehicleMode===2?car:player;
+ if(vehicleMode!==0){
+  active.position.copy(player.position);
+  active.position.y=0;
+  active.rotation.y=player.rotation.y;
+ }
+
+ customers.forEach(c=>{
+  if(!c.done){
+   c.ring.rotation.z+=dt;
+   c.g.rotation.y+=Math.sin(clock.elapsedTime*2)*.0008;
+  }
+ });
+ const target=player.position.clone();
+ const dist=16;
+ const camOffset=new THREE.Vector3(
+  Math.sin(angle)*dist,11,Math.cos(angle)*dist
+ );
+ camera.position.lerp(target.clone().add(camOffset),.08);
+ camera.lookAt(target.x,target.y+1,target.z);
+
+ const nearest=customers.find(c=>!c.done&&player.position.distanceTo(c.g.position)<4);
+ document.querySelector('#interact').textContent=
+ nearest||current?'E - Makeup':'Tìm khách hàng';
+ renderer.render(scene,camera);
+}
+animate();
+
+addEventListener('resize',()=>{
+ camera.aspect=innerWidth/innerHeight;
+ camera.updateProjectionMatrix();
+ renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>
